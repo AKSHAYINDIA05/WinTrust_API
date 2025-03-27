@@ -1,9 +1,9 @@
 from flask import Flask, request, jsonify, send_from_directory, session
-# from azure.storage.blob import BlobServiceClient
+from azure.storage.blob import BlobServiceClient
 import pandas as pd
-# import io
+import io
 import requests
-# from ydata_profiling import ProfileReport
+from ydata_profiling import ProfileReport
 import os
 from dotenv import load_dotenv
 import time
@@ -13,14 +13,14 @@ from flask_session import Session
 app = Flask(__name__)
 
 app.config["SESSION_TYPE"] = "filesystem"
-app.config["SECRET_KEY"] = secrets.token_hex(32)  # Secure random key for session encryption
+app.config["SECRET_KEY"] = secrets.token_hex(32)
 Session(app)
 
 conn_string = os.getenv("AZURE_CONNECTION_STRING")
 
-# blob_service_client = BlobServiceClient.from_connection_string(
-#     conn_string
-# )
+blob_service_client = BlobServiceClient.from_connection_string(
+    conn_string
+)
 
 REPORT_FILE = "profile_report.html"
 
@@ -34,7 +34,7 @@ def get_uuid():
         if not uuid:
             return jsonify({"error": "No UUID provided"}), 400
 
-        session['uuid'] = uuid  # Store UUID in session
+        session['uuid'] = uuid
         return jsonify({"message": "UUID successfully stored.", "uuid": uuid}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -69,45 +69,45 @@ def get_unique_id():
         if not unique_id_column:
             return jsonify({"error": "No unique_id_column provided"}), 400
 
-        session['unique_id_column'] = unique_id_column  # Store in session
+        session['unique_id_column'] = unique_id_column
         return jsonify({"message": "Unique ID column successfully stored.", "unique_id_column": unique_id_column}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
-# @app.route("/generate-profile", methods=["POST"])
-# def generate_profile():
-#     uuid = session.get('uuid')
-#     if not uuid:
-#         return jsonify({"error": "UUID not found. Call /get_uuid first."}), 400
+@app.route("/generate-profile", methods=["POST"])
+def generate_profile():
+    uuid = session.get('uuid')
+    if not uuid:
+        return jsonify({"error": "UUID not found. Call /get_uuid first."}), 400
 
-#     try:
+    try:
         
-#         blob_client = blob_service_client.get_blob_client(
-#             container="bronze",
-#             blob=f"/Users/{uuid}/input.csv"
-#         )
-#         blob_data = blob_client.download_blob().readall()
-#         df = pd.read_csv(io.BytesIO(blob_data))
-
-        
-#         session['df_json'] = df.to_json()
+        blob_client = blob_service_client.get_blob_client(
+            container="bronze",
+            blob=f"/Users/{uuid}/input.csv"
+        )
+        blob_data = blob_client.download_blob().readall()
+        df = pd.read_csv(io.BytesIO(blob_data))
 
         
-#         profile = ProfileReport(df, explorative=True)
-#         profile.to_file(REPORT_FILE)
+        session['df_json'] = df.to_json()
 
-#         return jsonify({"message": "Profile report generated", "report_url": "/view-report"}), 200
-#     except Exception as e:
-#         return jsonify({"error": str(e)}), 500
+        
+        profile = ProfileReport(df, explorative=True)
+        profile.to_file(REPORT_FILE)
+
+        return jsonify({"message": "Profile report generated", "report_url": "/view-report"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
-# @app.route("/view-report", methods=["GET"])
-# def view_report():
-#     if not os.path.exists(REPORT_FILE):
-#         return jsonify({"error": "Report not found. Please generate it first."}), 404
+@app.route("/view-report", methods=["GET"])
+def view_report():
+    if not os.path.exists(REPORT_FILE):
+        return jsonify({"error": "Report not found. Please generate it first."}), 404
     
-#     return send_from_directory(REPORT_FILE, mimetype="text/html")
+    return send_from_directory(REPORT_FILE, mimetype="text/html")
 
 DATABRICKS_INSTANCE = os.getenv('DATABRICKS_INSTANCE')
 DATABRICKS_TOKEN = os.getenv('DATABRICKS_TOKEN')
