@@ -10,13 +10,17 @@ import time
 import secrets
 from flask_session import Session
 
+load_dotenv()
+
 app = Flask(__name__)
 
 app.config["SESSION_TYPE"] = "filesystem"
 app.config["SECRET_KEY"] = secrets.token_hex(32)
 Session(app)
-
 conn_string = os.getenv("AZURE_CONNECTION_STRING")
+
+if not conn_string:
+    raise ValueError("AZURE_CONNECTION_STRING is not set.")
 
 blob_service_client = BlobServiceClient.from_connection_string(
     conn_string
@@ -48,9 +52,6 @@ def get_metadata(uuid):
         )
     blob_data = blob_client.download_blob().readall()
     df = pd.read_csv(io.BytesIO(blob_data))
-
-    if not df:
-        return jsonify({"error": "No data found in blob."}), 400
 
     try:
         metadata = {
