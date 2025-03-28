@@ -40,14 +40,18 @@ def get_uuid():
         return jsonify({"error": str(e)}), 500
     
 
-@app.route('/get_metadata', methods=['GET'])
-def get_metadata():
-    df_json = session.get('df_json')
+@app.route('/<uuid>/get_metadata', methods=['GET'])
+def get_metadata(uuid):
+    blob_client = blob_service_client.get_blob_client(
+            container="bronze",
+            blob=f"/Users/{uuid}/input.csv"
+        )
+    blob_data = blob_client.download_blob().readall()
+    df = pd.read_csv(io.BytesIO(blob_data))
 
-    if not df_json:
-        return jsonify({"error": "No data found in session. Call /generate-profile first."}), 400
+    if not df:
+        return jsonify({"error": "No data found in blob."}), 400
 
-    df = pd.read_json(df_json)  
     try:
         metadata = {
             "columns": [{"name": col, "dtype": str(df[col].dtype)} for col in df.columns],
