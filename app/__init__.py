@@ -9,10 +9,12 @@ from dotenv import load_dotenv
 import time
 import secrets
 from flask_session import Session
+from flask_cors import CORS
 
 load_dotenv()
 
 app = Flask(__name__)
+CORS(app)
 
 app.config["SESSION_TYPE"] = "filesystem"
 app.config["SECRET_KEY"] = secrets.token_hex(32)
