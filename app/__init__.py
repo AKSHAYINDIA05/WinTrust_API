@@ -140,7 +140,7 @@ def run_databricks(uuid):
     spark = SparkSession.builder.appName("BlobToCSV").getOrCreate()
     
     # Azure Blob Storage connection details
-    connection_string = {conn_string}
+    connection_string = "DefaultEndpointsProtocol=https;AccountName=wintruststorage;AccountKey=eyG+9oULTwLW3sGNUwyWsaJzrzXmE1qIca/B+lG6cKLFqJm35BwplzcRWJ65D2uk3gX7H10HVmiX+AStSZi8Gw==;EndpointSuffix=core.windows.net"
     container_name = "bronze"
     blob_service_client = BlobServiceClient.from_connection_string(connection_string)
     container_client = blob_service_client.get_container_client(container_name)
