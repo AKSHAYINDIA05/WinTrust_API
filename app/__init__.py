@@ -82,9 +82,8 @@ def get_unique_id():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/generate-profile", methods=["POST"])
-def generate_profile():
-    uuid = session.get('uuid')
+@app.route("/<uuid>/generate-profile", methods=["POST"])
+def generate_profile(uuid):
     if not uuid:
         return jsonify({"error": "UUID not found. Call /get_uuid first."}), 400
 
@@ -96,25 +95,14 @@ def generate_profile():
         )
         blob_data = blob_client.download_blob().readall()
         df = pd.read_csv(io.BytesIO(blob_data))
-
-        
-        session['df_json'] = df.to_json()
-
         
         profile = ProfileReport(df, explorative=True)
         profile.to_file(REPORT_FILE)
 
-        return jsonify({"message": "Profile report generated", "report_url": "/view-report"}), 200
+        return send_from_directory(REPORT_FILE, mimetype="text/html"), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-
-@app.route("/view-report", methods=["GET"])
-def view_report():
-    if not os.path.exists(REPORT_FILE):
-        return jsonify({"error": "Report not found. Please generate it first."}), 404
-    
-    return send_from_directory(REPORT_FILE, mimetype="text/html")
 
 DATABRICKS_INSTANCE = os.getenv('DATABRICKS_INSTANCE')
 DATABRICKS_TOKEN = os.getenv('DATABRICKS_TOKEN')
@@ -131,8 +119,8 @@ HEADERS = {
 }
 
 
-@app.route("/run-databricks", methods=["POST"])
-def run_databricks():
+@app.route("/<uuid>/run-databricks", methods=["POST"])
+def run_databricks(uuid):
     session_payload = {"language": "python", "clusterId": CLUSTER_ID}
     session_response = requests.post(SESSION_URL, headers=HEADERS, json=session_payload)
     session_id = session_response.json().get("id")
@@ -140,10 +128,133 @@ def run_databricks():
     if not session_id:
         return jsonify({"error": "Failed to create execution context", "details": session_response.text}), 500
     
-    pyspark_code = """
-    df = spark.read.option('header', 'true').csv("/mnt/bronze/hsptl", inferSchema=True)
-    display(df)
-    df.write.format("delta").mode("overwrite").save("/mnt/silver/hspt_ak")
+    pyspark_code = f"""
+    import pandas as pd
+    from azure.storage.blob import BlobServiceClient
+    import io
+    from pyspark.sql import SparkSession
+    from pyspark.sql.functions import col, isnull
+    from scipy.stats import zscore
+    
+    # Initialize Spark session
+    spark = SparkSession.builder.appName("BlobToCSV").getOrCreate()
+    
+    # Azure Blob Storage connection details
+    connection_string = {conn_string}
+    container_name = "bronze"
+    blob_service_client = BlobServiceClient.from_connection_string(connection_string)
+    container_client = blob_service_client.get_container_client(container_name)
+    
+    # Function to download a blob from Azure Storage
+    def download_blob(blob_name):
+        try:
+            blob_client = container_client.get_blob_client(blob_name)
+            return blob_client.download_blob().readall()
+        except Exception as e:
+            print(f"Error downloading blob")
+            return None
+    
+    # Function to check if the blob exists in Azure Blob Storage
+    def file_exists(blob_name):
+        try:
+            blob_client = container_client.get_blob_client(blob_name)
+            blob_client.get_blob_properties()  # This will raise an error if the blob doesn't exist
+            return True
+        except Exception as e:
+            print(f"Error")
+            return False
+    
+    # Function to list all files in the Azure Blob Storage container
+    def list_files_in_container():
+        try:
+            blob_list = container_client.list_blobs()
+            files = [blob.name for blob in blob_list]
+            print(f"Files in the container")
+            return files
+        except Exception as e:
+            print(f"Error listing files in the container")
+            return []
+    
+    # Function to remove outliers using Z-score (values with |Z| > 3)
+    def remove_outliers(df):
+        
+        numerical_columns = [column for column in df.columns if df.schema[column].dataType.simpleString() in ['int', 'double', 'float']]
+    
+        for column in numerical_columns:
+            column_values = [row[column] for row in df.select(column).collect() if row[column] is not None]
+            if column_values:
+                z_scores = zscore(column_values)
+                threshold = 3
+                filtered_values = [val for val, z in zip(column_values, z_scores) if abs(z) <= threshold]
+                df = df.filter(col(column).isin(filtered_values))
+    
+        return df
+    
+    # Function to calculate trust score (same as provided in your initial code)
+    def calculate_trust_score(df):
+        total_rows = df.count()
+        if total_rows == 0:
+            return 0.0
+    
+        # **1. Missing Data Percentage**
+        missing_data_percentage = sum(df.filter(isnull(col(column))).count() for column in df.columns) / total_rows * 100
+    
+        # **2. Duplicate Row Percentage**
+        duplicate_percentage = (total_rows - df.distinct().count()) / total_rows * 100
+    
+        # **3. Outlier Percentage (Before Removal)**
+        df_cleaned = remove_outliers(df)
+        outlier_percentage = (1 - (df_cleaned.count() / total_rows)) * 100
+    
+        # **4. Invalid Data Percentage (Negative Values)**
+        numerical_columns = [column for column in df.columns if df.schema[column].dataType.simpleString() in ['int', 'double', 'float']]
+        invalid_percentage = sum(df.filter(col(column) < 0).count() for column in numerical_columns) / total_rows * 100
+    
+        # **Compute Final Trust Score**
+        penalty_percentage = (missing_data_percentage + duplicate_percentage + outlier_percentage + invalid_percentage) / 4
+        trust_score = max(0, 100 - penalty_percentage)  # Ensure it doesn't go below 0
+    
+        return trust_score
+    
+    # Main function to process the _output.csv file
+    def main():
+        try:
+            # List all files in the container
+            files_in_container = list_files_in_container()
+        
+            # Specify the output file you want to check (update this with the correct file name)
+            output_csv_name = f'Users/{uuid}/input.csv' 
+    
+            # Check if the file exists in the container
+            if output_csv_name in files_in_container:
+                print(f"File found. Downloading...")
+            
+                # Download the _output.csv file from Blob Storage
+                blob_data = download_blob(output_csv_name)
+            
+                if blob_data:
+                    # Read the CSV data into a pandas DataFrame
+                    df = pd.read_csv(io.BytesIO(blob_data))
+    
+                    # Create a Spark DataFrame from pandas DataFrame
+                    spark_df = spark.createDataFrame(df)
+    
+                    # Calculate the trust score
+                    trust_score = calculate_trust_score(spark_df)
+    
+                    # Print the final trust score
+                    print("Trust Score:", trust_score)
+                else:
+                    print(f"Failed to download .")
+            else:
+                print(f"File  does not exist in the container.")
+    
+        except Exception as e:
+            print(f"Error occurred:")
+    
+    # Execute the main function
+    if __name__ == "__main__":
+        main()
     """
     command_payload = {"language": "python", "clusterId": CLUSTER_ID, "contextId": session_id, "command": pyspark_code}
     command_response = requests.post(COMMAND_URL, headers=HEADERS, json=command_payload)
@@ -168,4 +279,4 @@ def check_status(session_id, command_id):
         time.sleep(3)
 
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=8000)
+    app.run()
