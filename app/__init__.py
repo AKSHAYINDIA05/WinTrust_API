@@ -88,7 +88,6 @@ def generate_profile(uuid):
         return jsonify({"error": "UUID not found. Call /get_uuid first."}), 400
 
     try:
-        
         blob_client = blob_service_client.get_blob_client(
             container="bronze",
             blob=f"/Users/{uuid}/input.csv"
@@ -96,10 +95,11 @@ def generate_profile(uuid):
         blob_data = blob_client.download_blob().readall()
         df = pd.read_csv(io.BytesIO(blob_data))
         
+        # Generate the profiling report as an HTML string
         profile = ProfileReport(df, explorative=True)
-        profile.to_file(REPORT_FILE)
-
-        return send_from_directory(REPORT_FILE, mimetype="text/html"), 200
+        html_report = profile.to_html()  # Convert to HTML string
+        
+        return html_report, 200, {"Content-Type": "text/html"}
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
