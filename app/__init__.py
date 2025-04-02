@@ -88,6 +88,7 @@ def generate_profile(uuid):
         return jsonify({"error": "UUID not found. Call /get_uuid first."}), 400
 
     try:
+        # Get CSV file from Azure Blob Storage
         blob_client = blob_service_client.get_blob_client(
             container="bronze",
             blob=f"/Users/{uuid}/input.csv"
@@ -95,13 +96,24 @@ def generate_profile(uuid):
         blob_data = blob_client.download_blob().readall()
         df = pd.read_csv(io.BytesIO(blob_data))
         
-        # Generate the profiling report as an HTML string
+        # Generate profiling report as HTML
         profile = ProfileReport(df, explorative=True)
-        html_report = profile.to_html()  # Convert to HTML string
+        html_report = profile.to_html()
         
-        return html_report, 200, {"Content-Type": "text/html"}
+        # Convert HTML string to bytes and upload to Azure Blob Storage
+        output_blob_client = blob_service_client.get_blob_client(
+            container="bronze",
+            blob=f"/Users/{uuid}/input.html"
+        )
+        output_blob_client.upload_blob(html_report, overwrite=True)
+        
+        # Generate public URL for the uploaded HTML file
+        report_url = f"https://{blob_service_client.account_name}.blob.core.windows.net/bronze/Users/{uuid}/input.html"
+        
+        return jsonify({"report_url": report_url}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
 
 
 DATABRICKS_INSTANCE = os.getenv('DATABRICKS_INSTANCE')
